@@ -25,3 +25,8 @@ Thumbs.db
 
 # Logs
 *.log
+
+# AI-generated review artifacts & dev notes
+GEMINI_REVIEW.md
+*_REVIEW.md
+velog-post.md
