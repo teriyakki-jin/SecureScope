@@ -526,16 +526,17 @@ static void configureProperties(DynamicPropertyRegistry registry) {
 
 ## 테스트 결과
 
-### 단위 테스트 — 18개 전원 PASS
+### 단위 테스트 — 19개 전원 PASS
 
 ```
 > Task :test
 
 com.securescope.audit.AuditServiceTest
-  ✓ 첫 번째 레코드의 prevHash 는 '0' * 64 이다               (7.289s)
-  ✓ 두 번째 레코드의 prevHash 는 첫 레코드의 currentHash 이다  (0.022s)
-  ✓ 체인 무결성이 유효하면 verify() 가 true 를 반환한다         (0.013s)
-  ✓ 해시가 변조되면 verify() 가 false 를 반환한다              (0.007s)
+  ✓ 첫 번째 레코드의 prevHash 는 '0' * 64 이다                       (7.289s)
+  ✓ 두 번째 레코드의 prevHash 는 첫 레코드의 currentHash 이다          (0.022s)
+  ✓ 체인 무결성이 유효하면 verify() 가 true 를 반환한다                (0.013s)
+  ✓ prevHash 연결이 끊어지면 verify() 가 false 를 반환한다             (0.009s)
+  ✓ 해시가 변조되면 verify() 가 false 를 반환한다                     (0.007s)
 
 com.securescope.detection.AfterHoursRuleTest
   ✓ KST 9시는 허용 시간대 내 → 알림 없음
@@ -556,7 +557,7 @@ com.securescope.detection.BruteForceRuleTest
   ✓ 탐지 후 Redis 카운터를 리셋한다
 
 BUILD SUCCESSFUL
-18 tests completed, 0 failures, 0 skipped
+19 tests completed, 0 failures, 0 skipped
 ```
 
 ### JaCoCo 커버리지 (핵심 패키지)
@@ -574,13 +575,104 @@ BUILD SUCCESSFUL
 
 ---
 
+## 코드 리뷰 결과 및 수정
+
+구현 완료 후 코드 리뷰를 진행했다. CRITICAL/HIGH 이슈가 7건 발견됐고 모두 수정했다.
+
+### C4 — verify()의 체인 연결 검증 누락 (가장 중요)
+
+```java
+// 수정 전: 각 레코드의 해시 재계산만 확인
+for (AuditLog log : logs) {
+    String expected = sha256(log.getData() + log.getPrevHash());
+    if (!expected.equals(log.getCurrentHash())) { ... }
+}
+
+// 수정 후: 연결 무결성도 함께 확인
+String expectedPrev = "0".repeat(64);
+for (AuditLog log : logs) {
+    // (1) prevHash 연결 검증 — row[i].prevHash == row[i-1].currentHash
+    if (!log.getPrevHash().equals(expectedPrev)) {
+        return new VerifyResult(false, log.getId(), "Chain linkage broken...");
+    }
+    // (2) 개별 해시 재계산 검증
+    if (!sha256(log.getData() + log.getPrevHash()).equals(log.getCurrentHash())) { ... }
+    expectedPrev = log.getCurrentHash();
+}
+```
+
+기존 코드는 레코드를 삭제하거나 순서를 바꿔도 각 레코드가 자기 해시만 맞으면 통과됐다. 수정 후 연결이 끊기면 즉시 탐지한다.
+
+### C3 — append()의 동시 쓰기 경쟁 조건
+
+"최신 레코드 조회 → 새 해시 계산 → 저장" 사이에 다른 스레드가 끼어들면 두 레코드가 같은 `prevHash`를 가져 체인이 분기된다.
+
+```java
+// 수정: SERIALIZABLE isolation + prev_hash UNIQUE 제약 (V5 마이그레이션)
+@Transactional(isolation = Isolation.SERIALIZABLE)
+public AuditLog append(DetectionAlert alert) { ... }
+```
+
+PostgreSQL SERIALIZABLE이 phantom read를 막고, `prev_hash` UNIQUE 제약이 최후 안전망 역할을 한다.
+
+### C1 — PortScanRule의 isNew 판별 버그
+
+```java
+// 수정 전: opsForSet().add()는 Long 반환 → != null 항상 true
+Boolean isNew = redis.opsForSet().add(key, port) != null
+        && redis.getExpire(key) < 0;  // 의도와 달리 항상 TTL을 설정
+
+// 수정 후: getExpire()로 TTL 미설정 여부를 명시적으로 판별
+redis.opsForSet().add(key, String.valueOf(event.getTargetPort()));
+Long ttl = redis.getExpire(key, TimeUnit.SECONDS);
+if (ttl != null && ttl < 0) {
+    redis.expire(key, window, TimeUnit.SECONDS);
+}
+```
+
+### C2 — BruteForceRule 주석 오류
+
+INCR + EXPIRE는 **고정 윈도우 카운터(Fixed Window Counter)** 다. 주석의 "슬라이딩 윈도우"는 오탐이었다. 슬라이딩 윈도우가 필요하면 Sorted Set(ZADD/ZRANGEBYSCORE)으로 교체해야 한다.
+
+### H2/H3 — @EventListener의 동기 실행
+
+`@EventListener`는 이벤트 발행 스레드와 같은 스레드에서 동기 실행된다.
+
+- **RuleEngine**: `EventService.ingest()` 트랜잭션 내부에서 룰 평가가 실행돼, 룰 실패 시 이벤트 저장도 롤백됨 → `@TransactionalEventListener(AFTER_COMMIT) + REQUIRES_NEW` 적용
+- **SseBroadcaster**: HTTP 요청 스레드가 모든 SSE 구독자에게 전송을 마칠 때까지 블로킹 → `@Async` 적용
+
+### H4 — sourceIp 형식 미검증 (Redis 키 인젝션)
+
+```java
+// 수정: IPv4 형식 강제
+@Pattern(regexp = "^((25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\.){3}(25[0-5]|2[0-4]\\d|[01]?\\d\\d?)$")
+String sourceIp
+```
+
+Redis 키가 `brute_force:` + `sourceIp`로 구성되므로, 임의 문자열 입력 시 키 공간 오염이 가능했다.
+
+### H5 — IP 카운터 Redis 키 TTL 없음
+
+```java
+// 수정: 신규 키 생성 시 24시간 TTL 설정
+redis.opsForValue().increment(ipCountKey);
+Long ttl = redis.getExpire(ipCountKey, TimeUnit.SECONDS);
+if (ttl != null && ttl < 0) {
+    redis.expire(ipCountKey, 24, TimeUnit.HOURS);
+}
+```
+
+---
+
 ## 구현하면서 고민한 것들
 
 ### 1. 동시 쓰기 문제 — 해시체인 append
 
-해시체인 `append()`는 "직전 레코드 조회 → 새 해시 계산 → 저장" 세 단계가 원자적으로 실행돼야 한다. 동시 요청이 들어오면 두 레코드가 같은 `prevHash`를 가지게 되는 문제가 생긴다.
+해시체인 `append()`는 "직전 레코드 조회 → 새 해시 계산 → 저장" 세 단계가 원자적으로 실행돼야 한다.
+동시 요청이 들어오면 두 레코드가 같은 `prevHash`를 가져 체인이 분기된다.
 
-→ `@Transactional`로 트랜잭션을 묶고, 필요 시 `SELECT FOR UPDATE`를 추가하는 방향으로 대응했다.
+→ `@Transactional(isolation = SERIALIZABLE)`로 PostgreSQL이 트랜잭션 충돌을 직렬화하게 했고,
+`prev_hash UNIQUE` 제약을 DB 레벨 최후 안전망으로 추가했다.
 
 ### 2. SSE 연결 누수
 
@@ -594,9 +686,10 @@ emitter.onError(e      -> emitters.remove(emitter));
 
 세 케이스 모두 명시적으로 처리했다.
 
-### 3. 포트 스캔 룰의 TTL 경쟁 조건
+### 3. 포트 스캔 룰의 TTL 판별
 
-`SADD` 후 `getExpire`로 TTL을 확인해 음수(-1, TTL 없음)인 경우에만 `EXPIRE`를 설정했다. SADD와 EXPIRE 사이에 다른 요청이 끼어드는 경쟁 조건을 줄이기 위한 처리다.
+`SADD` 후 `getExpire`로 TTL을 확인해 음수(-1 또는 -2, TTL 미설정) 인 경우에만 `EXPIRE`를 설정했다.
+`opsForSet().add()`의 반환값이 항상 non-null이어서 `!= null` 조건이 의미 없다는 걸 코드 리뷰에서 발견했다.
 
 ---
 
@@ -625,10 +718,13 @@ python simulator/simulate.py --scenario all --verbose
 ## 마치며
 
 단순히 "로그 저장하는 API" 수준에서 출발했지만,
-룰 엔진의 전략 패턴, Redis 슬라이딩 윈도우, 해시체인, SSE 실시간 피드까지 레이어가 하나씩 쌓이면서 꽤 그럴듯한 구조가 됐다.
+룰 엔진의 전략 패턴, Redis 고정 윈도우 카운터, 해시체인, SSE 실시간 피드까지 레이어가 하나씩 쌓이면서 꽤 그럴듯한 구조가 됐다.
 
 가장 기억에 남는 부분은 **ApplicationEvent로 파이프라인을 연결한 것**이다.
 `EventService → RuleEngine → AuditService → SseBroadcaster` — 이 네 컴포넌트는 서로의 존재를 모른다. 이벤트 버스를 통해서만 대화한다. 나중에 SlackNotifier나 EmailAlert를 추가할 때도 기존 코드를 한 줄도 건드리지 않아도 된다.
+
+두 번째로 기억에 남는 건 **코드 리뷰에서 발견된 것들**이다.
+`verify()`가 체인 연결을 검증하지 않았고, `PortScanRule`의 `isNew` 조건이 항상 true였고, `@EventListener`가 트랜잭션 내부에서 동기 실행되고 있었다. 기능 테스트는 통과했지만 실제 운영 환경에서 문제가 됐을 부분들이다. "동작하는 코드"와 "올바른 코드" 사이의 거리를 체감했다.
 
 보안은 결국 **가시성(Visibility)** 의 문제라고 생각한다.
 무슨 일이 일어나고 있는지 볼 수 있어야, 대응할 수 있다.

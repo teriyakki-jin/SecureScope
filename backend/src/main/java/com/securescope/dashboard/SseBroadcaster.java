@@ -9,6 +9,7 @@ import com.securescope.event.SecurityEventCreatedEvent;
 import com.securescope.event.SecurityEventResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.event.EventListener;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -42,6 +43,12 @@ public class SseBroadcaster {
         return emitter;
     }
 
+    /**
+     * @Async: SSE 브로드캐스트를 Spring 공유 스레드풀에서 실행.
+     * ingest() 요청 스레드를 블로킹하지 않으며,
+     * 느린 SSE 구독자가 전체 처리량에 영향을 주지 않음.
+     */
+    @Async
     @EventListener
     public void onSecurityEvent(SecurityEventCreatedEvent domainEvent) {
         SsePayload payload = SsePayload.event(
@@ -49,6 +56,7 @@ public class SseBroadcaster {
         broadcast(payload);
     }
 
+    @Async
     @EventListener
     public void onAlertCreated(DetectionAlertCreatedEvent domainEvent) {
         SsePayload payload = SsePayload.alert(
