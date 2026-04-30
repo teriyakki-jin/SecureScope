@@ -12,6 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 @Service
 @RequiredArgsConstructor
@@ -30,7 +31,13 @@ public class EventService {
         );
         SecurityEvent saved = eventRepository.save(event);
 
-        redis.opsForValue().increment(RedisKeyPrefix.IP_EVENT_COUNT + saved.getSourceIp());
+        String ipCountKey = RedisKeyPrefix.IP_EVENT_COUNT + saved.getSourceIp();
+        redis.opsForValue().increment(ipCountKey);
+        // TTL 이 없는 경우(신규 키) 24시간으로 설정 — 무한 누적 방지
+        Long ttl = redis.getExpire(ipCountKey, TimeUnit.SECONDS);
+        if (ttl != null && ttl < 0) {
+            redis.expire(ipCountKey, 24, TimeUnit.HOURS);
+        }
 
         eventPublisher.publishEvent(new SecurityEventCreatedEvent(saved));
         return SecurityEventResponse.from(saved);

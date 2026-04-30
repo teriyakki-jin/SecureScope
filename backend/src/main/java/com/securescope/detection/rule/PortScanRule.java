@@ -32,9 +32,12 @@ public class PortScanRule implements DetectionRule {
         int    threshold = props.portScan().threshold();
         int    window    = props.portScan().windowSeconds();
 
-        Boolean isNew = redis.opsForSet().add(key, String.valueOf(event.getTargetPort())) != null
-                && redis.getExpire(key) < 0;
-        if (isNew) {
+        redis.opsForSet().add(key, String.valueOf(event.getTargetPort()));
+        // TTL 이 설정되지 않은 경우(-1 또는 -2) 새로 설정.
+        // opsForSet().add() 는 Long 을 반환하며 != null 은 항상 true 이므로
+        // 기존의 != null 조건으로는 신규 키 여부를 판별할 수 없었음.
+        Long ttl = redis.getExpire(key, TimeUnit.SECONDS);
+        if (ttl != null && ttl < 0) {
             redis.expire(key, window, TimeUnit.SECONDS);
         }
 

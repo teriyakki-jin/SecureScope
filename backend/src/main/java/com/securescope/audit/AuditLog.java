@@ -24,7 +24,7 @@ public class AuditLog {
     @Column(name = "data", nullable = false, columnDefinition = "TEXT")
     private String data;
 
-    @Column(name = "prev_hash", length = 64)
+    @Column(name = "prev_hash", length = 64, unique = true)
     private String prevHash;
 
     @Column(name = "current_hash", nullable = false, length = 64, unique = true)

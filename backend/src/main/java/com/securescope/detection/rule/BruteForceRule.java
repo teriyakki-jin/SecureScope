@@ -13,7 +13,9 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * 동일 IP에서 LOGIN_FAIL 이 windowSeconds 내에 threshold 이상 발생 시 탐지.
- * Redis INCR + EXPIRE 로 슬라이딩 윈도우 구현.
+ * Redis INCR + EXPIRE 로 고정 윈도우 카운터(Fixed Window Counter) 구현.
+ * 참고: INCR+EXPIRE 는 슬라이딩 윈도우가 아닌 고정 윈도우입니다.
+ *      슬라이딩 윈도우가 필요하면 Sorted Set(ZADD/ZRANGEBYSCORE)으로 교체 필요.
  */
 @Component
 @RequiredArgsConstructor

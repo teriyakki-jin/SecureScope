@@ -84,6 +84,28 @@ class AuditServiceTest {
     }
 
     @Test
+    @DisplayName("prevHash 연결이 끊어지면 verify() 가 false 를 반환한다 (C4 chain-linkage fix)")
+    void verifyReturnsFalseWhenChainLinkageBroken() throws Exception {
+        // first 레코드를 정상 생성
+        when(repository.findLatest()).thenReturn(Optional.empty());
+        AuditLog first = auditService.append(makeAlert(1L));
+
+        when(repository.findLatest()).thenReturn(Optional.of(first));
+        AuditLog second = auditService.append(makeAlert(2L));
+
+        // second 의 prevHash 를 잘못된 값으로 교체 — 연결 끊김 시뮬레이션
+        Field prevField = AuditLog.class.getDeclaredField("prevHash");
+        prevField.setAccessible(true);
+        prevField.set(second, "b".repeat(64)); // first.currentHash 와 다른 값
+
+        when(repository.findAllOrdered()).thenReturn(List.of(first, second));
+
+        AuditService.VerifyResult result = auditService.verify();
+        assertThat(result.valid()).isFalse();
+        assertThat(result.message()).contains("Chain linkage broken");
+    }
+
+    @Test
     @DisplayName("해시가 변조되면 verify() 가 false 를 반환한다")
     void verifyReturnsFalseWhenTampered() throws Exception {
         when(repository.findLatest()).thenReturn(Optional.empty());
