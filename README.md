@@ -100,7 +100,7 @@ row[2]: prevHash = currentHash₁    ...
 - Node.js 18+
 - Python 3.8+
 
-### 실행
+### 로컬 개발 (권장)
 
 ```bash
 # 1. 저장소 클론
@@ -122,6 +122,16 @@ npm install && npm run dev
 
 # 5. 공격 시나리오 시뮬레이션
 python simulator/simulate.py --scenario all --verbose
+```
+
+### Docker 전체 배포
+
+```bash
+# 백엔드 포함 전체 컨테이너 기동
+docker compose --profile full up -d --build
+
+# 로그 확인
+docker compose logs -f backend
 ```
 
 ### 시뮬레이터 옵션
