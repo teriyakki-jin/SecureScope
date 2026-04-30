@@ -1,0 +1,20 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "backend",
+      "runtimeExecutable": "C:/Program Files/Java/jdk-17/bin/java.exe",
+      "runtimeArgs": ["-jar", "D:/develop/bangsan/backend/build/libs/securescope-0.0.1-SNAPSHOT.jar"],
+      "port": 8090,
+      "autoPort": true
+    },
+    {
+      "name": "frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "cwd": "D:/develop/bangsan/frontend",
+      "port": 5173,
+      "autoPort": true
+    }
+  ]
+}

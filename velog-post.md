@@ -400,6 +400,180 @@ static void configureProperties(DynamicPropertyRegistry registry) {
 
 ---
 
+## 실제 실행 결과
+
+### 시뮬레이터 실행
+
+```
+🛡️  SecureScope Simulator
+   Target  : http://localhost:8090
+   Scenario: all
+   Attacker: 203.0.113.42
+──────────────────────────────────────────────────
+
+[NORMAL] 10개의 정상 이벤트를 전송합니다...
+  ✓ [LOGIN_SUCCESS] 192.168.1.50 → id=1
+  ✓ [LOGIN_SUCCESS] 192.168.1.11 → id=2
+  ... (총 10건)
+
+[BRUTE FORCE] 203.0.113.42 에서 로그인 실패 7회 전송...
+  ✓ [LOGIN_FAIL] 203.0.113.42 → id=11  (시도 1/7)
+  ✓ [LOGIN_FAIL] 203.0.113.42 → id=12  (시도 2/7)
+  ...
+  ✓ [LOGIN_FAIL] 203.0.113.42 → id=17  (시도 7/7)
+
+[PORT SCAN] 203.0.113.42 → 12개 포트 접근
+  ✓ [PORT_SCAN] 203.0.113.42 → id=18 ~ id=29
+
+[UNAUTHORIZED MAC] 3개의 미등록 MAC 주소로 접근...
+  ✓ [UNAUTHORIZED_ACCESS] 203.0.113.42 → id=30 ~ id=32
+
+[AFTER HOURS] 새벽 2시 KST 타임스탬프로 접근 이벤트 전송...
+  ✓ [LOGIN_SUCCESS] 203.0.113.42 → id=33 ~ id=35
+
+✅  시뮬레이션 완료 (총 35개 이벤트)
+```
+
+### 탐지 결과 — GET /api/alerts
+
+시뮬레이터 실행 직후 API 응답. 4가지 룰이 모두 정상 발동됐다.
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "alertType": "ALERT_BRUTE_FORCE",
+      "severity": "HIGH",
+      "sourceIp": "203.0.113.42",
+      "detail": "Login failure count: 5 in 60s window"
+    },
+    {
+      "alertType": "ALERT_PORT_SCAN",
+      "severity": "HIGH",
+      "sourceIp": "203.0.113.42",
+      "detail": "Distinct ports accessed: 10 in 10s window"
+    },
+    {
+      "alertType": "ALERT_UNAUTHORIZED_MAC",
+      "severity": "HIGH",
+      "sourceIp": "203.0.113.42",
+      "detail": "Unregistered MAC address: DE:AD:BE:EF:00:01"
+    },
+    {
+      "alertType": "ALERT_UNAUTHORIZED_MAC",
+      "severity": "HIGH",
+      "sourceIp": "203.0.113.42",
+      "detail": "Unregistered MAC address: CA:FE:BA:BE:00:02"
+    },
+    {
+      "alertType": "ALERT_UNAUTHORIZED_MAC",
+      "severity": "HIGH",
+      "sourceIp": "203.0.113.42",
+      "detail": "Unregistered MAC address: FA:CE:B0:0C:00:03"
+    },
+    {
+      "alertType": "ALERT_AFTER_HOURS",
+      "severity": "MED",
+      "sourceIp": "203.0.113.42",
+      "detail": "Access at 02:xx KST — allowed window 09:00-18:00"
+    }
+  ],
+  "meta": { "total": 8 }
+}
+```
+
+### 해시체인 무결성 검증 — GET /api/audit/verify
+
+```json
+{
+  "success": true,
+  "data": {
+    "valid": true,
+    "failedAtId": null,
+    "message": "Chain integrity OK. Records: 8"
+  }
+}
+```
+
+8개 탐지 이벤트가 모두 해시체인에 기록됐고, 체인 무결성도 정상이다.
+
+### IP별 이벤트 통계 — GET /api/stats/ip
+
+```json
+{
+  "data": {
+    "203.0.113.42": 25,
+    "192.168.1.10": 4,
+    "192.168.1.50": 3,
+    "10.0.0.5": 2,
+    "192.168.1.11": 1
+  }
+}
+```
+
+### 대시보드 (React)
+
+`http://localhost:5173` 에 접속하면 다음 세 뷰가 렌더링된다.
+
+| 뷰 | 내용 |
+|---|---|
+| **Live Events / Live Alerts** | SSE 실시간 피드 — 이벤트 타입별 색상 분류, 알림은 심각도 배지 표시 |
+| **Detection History** | 총 8건, BRUTE_FORCE·PORT_SCAN·UNAUTHORIZED_MAC·AFTER_HOURS 전 유형 탐지 확인, 심각도·유형 필터 동작 |
+| **IP별 이벤트 통계** | 공격자 IP `203.0.113.42` 25건으로 압도적 1위, Recharts BarChart 렌더링 |
+
+---
+
+## 테스트 결과
+
+### 단위 테스트 — 18개 전원 PASS
+
+```
+> Task :test
+
+com.securescope.audit.AuditServiceTest
+  ✓ 첫 번째 레코드의 prevHash 는 '0' * 64 이다               (7.289s)
+  ✓ 두 번째 레코드의 prevHash 는 첫 레코드의 currentHash 이다  (0.022s)
+  ✓ 체인 무결성이 유효하면 verify() 가 true 를 반환한다         (0.013s)
+  ✓ 해시가 변조되면 verify() 가 false 를 반환한다              (0.007s)
+
+com.securescope.detection.AfterHoursRuleTest
+  ✓ KST 9시는 허용 시간대 내 → 알림 없음
+  ✓ KST 10시는 허용 시간대 내 → 알림 없음
+  ✓ KST 12시는 허용 시간대 내 → 알림 없음
+  ✓ KST 17시는 허용 시간대 내 → 알림 없음
+  ✓ KST 0시는 허용 시간대 밖 → ALERT_AFTER_HOURS
+  ✓ KST 2시는 허용 시간대 밖 → ALERT_AFTER_HOURS
+  ✓ KST 6시는 허용 시간대 밖 → ALERT_AFTER_HOURS
+  ✓ KST 8시는 허용 시간대 밖 → ALERT_AFTER_HOURS
+  ✓ KST 18시는 허용 시간대 밖 → ALERT_AFTER_HOURS
+  ✓ KST 22시는 허용 시간대 밖 → ALERT_AFTER_HOURS
+
+com.securescope.detection.BruteForceRuleTest
+  ✓ LOGIN_FAIL 이 아닌 이벤트는 평가하지 않는다
+  ✓ 임계값 미만이면 알림이 발생하지 않는다
+  ✓ 임계값 이상이면 ALERT_BRUTE_FORCE 가 반환된다             (1.190s)
+  ✓ 탐지 후 Redis 카운터를 리셋한다
+
+BUILD SUCCESSFUL
+18 tests completed, 0 failures, 0 skipped
+```
+
+### JaCoCo 커버리지 (핵심 패키지)
+
+| 패키지 | 커버 라인 | 전체 라인 | 커버리지 |
+|---|---|---|---|
+| `audit` | 39 | 52 | **75.0%** |
+| `detection/rule` | 25 | 52 | **48.1%** |
+| `detection` | 25 | 77 | 32.5% |
+| `event` | 17 | 55 | 30.9% |
+| 전체 | 106 | 300 | **35.3%** |
+
+> `audit` 패키지(해시체인 핵심 로직)가 75%로 가장 높다.
+> 통합 테스트(Testcontainers)는 Docker 환경에서 추가 실행 가능하며, 실행 시 `event` 패키지 커버리지가 크게 올라간다.
+
+---
+
 ## 구현하면서 고민한 것들
 
 ### 1. 동시 쓰기 문제 — 해시체인 append

@@ -17,8 +17,7 @@ public class SecurityEvent {
     private Long id;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "event_type", nullable = false,
-            columnDefinition = "event_type")
+    @Column(name = "event_type", nullable = false, length = 30)
     private EventType eventType;
 
     @Column(name = "source_ip", nullable = false, length = 45)

@@ -21,7 +21,7 @@ spring:
       port: 6379
 
 server:
-  port: 8080
+  port: ${PORT:8090}
 
 securescope:
   detection:

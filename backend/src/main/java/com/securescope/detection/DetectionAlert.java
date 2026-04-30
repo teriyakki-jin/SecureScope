@@ -18,11 +18,11 @@ public class DetectionAlert {
     private Long id;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "alert_type", nullable = false, columnDefinition = "alert_type")
+    @Column(name = "alert_type", nullable = false, length = 30)
     private AlertType alertType;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "severity", nullable = false, columnDefinition = "severity")
+    @Column(name = "severity", nullable = false, length = 10)
     private Severity severity;
 
     @Column(name = "source_ip", nullable = false, length = 45)
