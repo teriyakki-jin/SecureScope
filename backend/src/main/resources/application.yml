@@ -1,0 +1,36 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/securescope
+    username: securescope
+    password: securescope
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+server:
+  port: 8080
+
+securescope:
+  detection:
+    brute-force:
+      threshold: 5
+      window-seconds: 60
+    port-scan:
+      threshold: 10
+      window-seconds: 10
+    allowed-hours:
+      start: 9
+      end: 18
